@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AI 加拿大食品标签合规审核</title>
+<!-- 引入 PDF.js 用于解析 PDF 文件 -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  // 配置 PDF.js Worker
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+</script>
+
+<style>
+:root{
+  --bg:#f6f8fb; --card:#fff; --text:#1f2937; --muted:#6b7280; --border:#e5e7eb;
+  --brand:#2563eb; --brand2:#0ea5e9; --ok:#10b981; --err:#ef4444;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",Arial,sans-serif;padding:24px}
+
+/* --- 修改 1: 移除原来给右侧栏留出的空间，让页面居中 --- */
+/* 原本的 @media (min-width: 1100px) 已删除或重置 */
+@media (min-width: 1100px) {
+  body { padding-right: 24px; } 
+  .page-header { margin-right: -24px !important; } 
+}
+
+.page-header{
+  background:linear-gradient(135deg,var(--brand),var(--brand2));
+  color:#fff;
+  padding:16px 24px;
+  margin:-24px -24px 24px -24px;
+  font-size:20px;
+  font-weight:800;
+  text-align:center;
+  box-shadow:0 4px 12px rgba(0,0,0,.08);
+}
+.wrap{max-width:980px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 16px 12px;margin-bottom:16px}
+.hdr{font-weight:800;margin-bottom:8px}
+.sub{color:var(--muted);font-size:12px}
+.toolbar{display:flex;gap:8px;align-items:center;margin:10px 0 6px;flex-wrap:wrap}
+.btn{padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:#f3f4f6;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent;font-weight:800;box-shadow:0 8px 20px rgba(37,99,235,.18)}
+.badge{display:inline-block;padding:4px 8px;border:1px dashed var(--border);border-radius:999px;font-size:12px;background:#fff}
+.drop{border:2px dashed #cfe0ff;border-radius:14px;padding:18px;text-align:center;background:#f9fbff}
+.drop.hover{background:#eef6ff}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-top:12px}
+.tile{position:relative;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;aspect-ratio: 3/4;}
+.tile img{display:block;width:100%;height:100%;object-fit:contain;background:#eee;}
+.tag{position:absolute;left:6px;top:6px;font-size:11px;background:#00000090;color:#fff;border-radius:6px;padding:2px 6px;z-index:2;}
+.info-bar{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);color:#fff;font-size:10px;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rm{position:absolute;right:6px;top:6px;font-size:12px;border:0;background:#ef4444;color:#fff;border-radius:6px;padding:4px 8px;cursor:pointer;z-index:3;}
+.rm:hover{background:#dc2626;}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.muted{color:var(--muted)}
+.result{white-space:pre-wrap;border:1px solid var(--border);border-radius:12px;padding:12px;background:#fff;min-height:120px}
+.input{padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:#fff;min-width:120px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center}
+
+/* --- 修改 2: 悬浮对话框样式调整 --- */
+.chat-wrap{
+  position:fixed;
+  right:20px;
+  bottom: 80px; /* 距离底部留出按钮空间 */
+  top: auto;    /* 不再固定顶部 */
+  width:340px;
+  height: 550px;       /* 固定高度 */
+  max-height: 70vh;    /* 避免屏幕过小时溢出 */
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:16px;
+  box-shadow:0 10px 40px rgba(0,0,0,.2);
+  display:none; /* 默认隐藏，点击按钮弹出 */
+  flex-direction:column;
+  overflow:hidden;
+  z-index:900;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chat-hdr{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;background:#fbfbfd; cursor: default;}
+.chat-title{font-weight:800}
+.chat-body{padding:10px;flex:1;overflow:auto;background:var(--bg)}
+.chat-msg{margin:8px 0;display:flex;gap:8px;align-items:flex-start}
+.chat-msg.me{flex-direction:row-reverse}
+.chat-bubble{max-width:88%;padding:8px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;white-space:pre-wrap;font-size:13px;}
+.chat-msg.me .chat-bubble{background:#e8f0ff;border-color:#c7dafc}
+.chat-msg.sys .chat-bubble{background:#fef3c7;border-color:#fde68a;font-size:12px;}
+.chat-input{display:flex;gap:8px;padding:10px;border-top:1px solid var(--border);background:#fff}
+.chat-input input{flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:10px}
+.chat-input button{padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:#f3f4f6;cursor:pointer}
+.chat-chipbar{padding:8px 10px;display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px dashed #eee;}
+.chat-chip{font-size:12px;padding:4px 8px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;cursor:pointer;color:var(--brand);}
+.chat-chip:hover{background:#eff6ff;}
+
+/* --- 修改 3: 新增悬浮按钮和最小化按钮样式 --- */
+.chat-trigger {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: linear-gradient(135deg,var(--brand),var(--brand2));
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(37,99,235,0.4);
+  cursor: pointer;
+  z-index: 910;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+}
+.chat-trigger:hover { transform: scale(1.05); }
+.min-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.min-btn:hover { color: var(--text); background: #eee; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header class="page-header">AI 加拿大食品标签合规审核工具 (FDR/SFCR/CPLA)</header>
+<div class="wrap">
+  <div class="card">
+    <div class="hdr">1）上传文件（图片 或 PDF）</div>
+    <div class="sub">支持 JPG/PNG 以及 PDF文件。PDF 将自动拆分为图片，您可以手动移除不需要的页面。</div>
+    <div class="drop" id="drop">拖到这里</div>
+    <div class="toolbar">
+      <button class="btn" id="pickBtn" type="button">添加文件</button>
+      <input id="picker" type="file" multiple accept="image/*,.pdf,application/pdf" style="position:absolute;left:-9999px;opacity:0;"/>
+      <button class="btn" id="clearBtn" type="button">清空</button>
+      <span class="badge" id="sizeInfo">未选择文件</span>
+    </div>
+    <div class="gallery" id="gallery"></div>
+  </div>
+  <div class="card">
+    <div class="hdr">2）参数（直连大模型）</div>
+    <div class="kv" style="margin-bottom:8px">
+      <div class="muted">执行标准</div>
+      <div class="row">
+        <div class="input" style="background:#f3f4f6;color:#333;font-weight:bold;cursor:default;width:100%;">
+            加拿大联邦标签要求（FDA/FDR/SFCR/CPLA/CPLR/CFIA）
+        </div>
+      </div>
+    </div>
+    <div class="row" style="gap:12px;flex-wrap:wrap;margin:10px 0 6px">
+      <div class="kv">
+        <div class="muted">提交图片上限（含PDF页，0=全部）</div>
+        <input class="input" id="maxSend" type="number" min="0" value="12" style="width:220px"/>
+      </div>
+      <div class="kv">
+        <div class="muted">PDF导入页数上限（每个PDF，0=全部）</div>
+        <input class="input" id="pdfMax" type="number" min="0" value="20" style="width:220px"/>
+      </div>
+      <div class="kv">
+        <div class="muted">输出上限 tokens（建议 ≤32768）</div>
+        <input class="input" id="maxTokens" type="number" min="1024" value="16384" style="width:220px"/>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="audit" type="button">开始审核</button>
+      <button class="btn" id="copy" type="button">复制结果</button>
+      <button class="btn" id="exportPdf" type="button">导出 PDF</button>
+      <span class="sub" id="status">就绪</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="hdr">3）审核结果</div>
+    <div class="result" id="result">（请先添加文件后点击“开始审核”。AI 将自动核对75项要素。）</div>
+  </div>
+</div>
+
+<!-- 修改 4: 悬浮按钮 -->
+<button class="chat-trigger" id="chatTrigger" title="打开合规追问">问</button>
+
+<div class="chat-wrap" id="chatWrap" aria-live="polite">
+  <div class="chat-hdr">
+    <div class="chat-title">合规追问</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+        <span class="sub" id="chatStatus">就绪</span>
+        <!-- 修改 5: 最小化按钮 -->
+        <button class="min-btn" id="chatMin" title="最小化">－</button>
+    </div>
+  </div>
+  <div class="chat-chipbar" id="chipBar">
+    <span class="chat-chip">双语(英/法)检查</span><span class="chat-chip">营养成分表(NFT)</span><span class="chat-chip">过敏原/声明</span><span class="chat-chip">净含量与PDP</span><span class="chat-chip">声称/广告语</span>
+  </div>
+  <div class="chat-body" id="chatBody">
+    <div class="chat-msg sys">
+      <div class="chat-bubble">👋 提示：仅回答“加拿大食品标签合规（CFIA/Health Canada）”相关问题。</div>
+    </div>
+  </div>
+  <div class="chat-input">
+    <input id="chatInput" placeholder="输入问题..."/><button id="chatSend" type="button">发送</button>
+  </div>
+</div>
+
+<script>
+(()=>{ 'use strict';
+
+/* =====================
+   配置
+===================== */
+const API_KEY = "AIzaSyArDraf5-ptHRzFofBPx-PXZszJIPfLmCc";
+const MODEL_CANDIDATES = ["gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"];
+const buildUrl = (model)=>`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${API_KEY}`;
+/* =====================
+   DOM 引用
+===================== */
+const pickerEl = document.getElementById('picker'), pickBtn = document.getElementById('pickBtn'),
+      dropEl = document.getElementById('drop'), clearBtn = document.getElementById('clearBtn'),
+      galleryEl= document.getElementById('gallery'), sizeInfoEl=document.getElementById('sizeInfo'),
+      maxSendEl=document.getElementById('maxSend'), pdfMaxEl=document.getElementById('pdfMax'), maxTokensEl=document.getElementById('maxTokens'),
+      auditEl = document.getElementById('audit'), copyEl = document.getElementById('copy'),
+      statusEl = document.getElementById('status'), resultEl = document.getElementById('result'),
+      exportPdfEl = document.getElementById('exportPdf'),
+      chatWrap = document.getElementById('chatWrap'),
+      chatBody = document.getElementById('chatBody'), chatInput = document.getElementById('chatInput'),
+      chatSend = document.getElementById('chatSend'), chatStatus = document.getElementById('chatStatus'),
+      chipBar = document.getElementById('chipBar'),
+      // 新增引用
+      chatTrigger = document.getElementById('chatTrigger'),
+      chatMin = document.getElementById('chatMin');
+
+/* =====================
+   状态
+===================== */
+// files 结构更新：{ type: 'image', source: 'file'|'pdf_page', file?: File, dataUrl: string, name: string }
+let files = [];
+let lastDataUrls = [];
+let chatBusy = false;
+
+/* =====================
+   工具函数
+===================== */
+function status(msg, ok=false, err=false){
+  statusEl.textContent = msg;
+  statusEl.style.color = err ? 'var(--err)' : (ok ? 'var(--ok)' : 'var(--muted)');
+}
+function chatStatusTip(msg){ chatStatus.textContent = msg; }
+
+function refreshUI(){
+  galleryEl.innerHTML = '';
+  // 仅计算原始文件数量（估算），或者直接显示图片页数
+  sizeInfoEl.textContent = files.length ? `当前共 ${files.length} 张图片/页面` : '未选择文件';
+  auditEl.disabled = files.length === 0;
+
+  files.forEach((it, idx)=>{
+    const tile = document.createElement('div'); tile.className='tile';
+    
+    const tag = document.createElement('div'); tag.className='tag';
+    tag.textContent = it.source === 'pdf_page' ? 'PDF页' : '图片';
+    
+    // 移除按钮
+    const rm  = document.createElement('button'); rm.className='rm'; rm.textContent='× 移除';
+    rm.onclick = ()=>{ files.splice(idx,1); refreshUI(); };
+    
+    // 图片展示
+    const img = document.createElement('img');
+    img.src = it.dataUrl; // 使用 dataUrl（无论是上传的图片预览还是PDF生成的）
+    
+    // 底部信息条
+    const info = document.createElement('div'); info.className='info-bar';
+    info.textContent = it.name;
+
+    tile.appendChild(tag);
+    tile.appendChild(rm);
+    tile.appendChild(img);
+    tile.appendChild(info);
+    galleryEl.appendChild(tile);
+  });
+}
+
+// 核心修改：支持 PDF 渲染为图片列表
+async function pushFiles(list){
+  status('正在处理文件...');
+  let hasPdf = false;
+
+  for (const f of list){
+    const ext = (f.name.split('.').pop()||'').toLowerCase();
+    
+    if (ext === 'pdf' || f.type === 'application/pdf') {
+      hasPdf = true;
+      try {
+        status(`正在解析 PDF: ${f.name}...`);
+        const pdfLimit = parseInt((pdfMaxEl && pdfMaxEl.value) || '0', 10) || 0;
+        const pdfPages = await renderPdfPages(f, pdfLimit);
+        files.push(...pdfPages);
+      } catch(err) {
+        console.error(err);
+        alert(`PDF解析失败 (${f.name}): ` + err.message);
+      }
+    } else if (f.type?.startsWith('image')) {
+      // 普通图片
+      files.push({
+        type: 'image',
+        source: 'file',
+        file: f,
+        dataUrl: URL.createObjectURL(f),
+        name: f.name
+      });
+    }
+  }
+  refreshUI();
+  status('就绪', true);
+}
+
+// 使用 pdf.js 将 PDF 每一页转为 canvas dataURL
+async function renderPdfPages(file, pageLimit=0) {
+  const arrayBuffer = await file.arrayBuffer();
+  // 加载 PDF
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+  const pages = [];
+
+  // 遍历每一页
+  const maxPages = pageLimit && pageLimit > 0 ? Math.min(pageLimit, pdf.numPages) : pdf.numPages;
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    // 设置缩放，1.5倍通常足够清晰且不会过大
+    const viewport = page.getViewport({ scale: 1.5 });
+    
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+    
+    pages.push({
+      type: 'image',
+      source: 'pdf_page',
+      dataUrl: canvas.toDataURL('image/jpeg', 0.8),
+      name: `${file.name} - 第${pageNum}页`
+    });
+  }
+  return pages;
+}
+
+// 修改后的压缩函数：兼容 File 对象和 DataURL 字符串
+function downscaleImage(item, maxEdge=1600, quality=0.82){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const scale = Math.min(1, maxEdge / Math.max(w, h));
+      const nw = Math.round(w*scale), nh = Math.round(h*scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = nw; canvas.height = nh;
+      canvas.getContext('2d').drawImage(img, 0, 0, nw, nh);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    // 如果有 file 对象则用 objectURL，否则（PDF页）直接用 dataUrl
+    img.src = item.file ? URL.createObjectURL(item.file) : item.dataUrl;
+  });
+}
+
+/* =====================
+   事件监听器
+===================== */
+pickBtn.addEventListener('click', ()=> pickerEl.click());
+pickerEl.addEventListener('change', e=>{ pushFiles(e.target.files||[]); try{ e.target.value=''; }catch(err){} });
+dropEl.addEventListener('dragover', e=>{ e.preventDefault(); e.stopPropagation(); dropEl.classList.add('hover'); });
+dropEl.addEventListener('dragleave', e=>{ e.preventDefault(); e.stopPropagation(); dropEl.classList.remove('hover'); });
+dropEl.addEventListener('drop', e=>{
+  e.preventDefault();
+  e.stopPropagation();
+  dropEl.classList.remove('hover');
+  if (e.dataTransfer?.files) pushFiles(e.dataTransfer.files);
+});
+clearBtn.addEventListener('click', ()=>{ files.length = 0; refreshUI(); });
+
+/* =====================
+   Gemini 封装
+===================== */
+function buildGeminiContents(parts){
+  const gemParts = [];
+  for (const p of parts){
+    if (p.type==='text'){ gemParts.push({ text: p.text }); }
+    else if (p.type==='data_url'){
+      const m = /^data:(.*?);base64,(.*)$/i.exec(p.dataUrl||'');
+      if (m) gemParts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+    }
+  }
+  return [{ role: 'user', parts: gemParts }];
+}
+async function geminiRequest(model, contents, temperature){
+  const maxTokens = parseInt((maxTokensEl && maxTokensEl.value) || '16384', 10) || 16384;
+  const payload = { contents, generationConfig: { temperature, maxOutputTokens: maxTokens } };
+  const res = await fetch(buildUrl(model), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+    body: JSON.stringify(payload)
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status} -> ${text}`);
+  try {
+    const data = JSON.parse(text);
+    return data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('').trim() || '(无返回内容)';
+  } catch(e) { throw new Error('非JSON返回：'+text); }
+}
+async function sendWithFallback(contents, temperature, onSwitch){
+  let lastErr = null;
+  for (const m of MODEL_CANDIDATES){
+    try {
+      if (MODEL_CANDIDATES.indexOf(m) > 0 && onSwitch) onSwitch(m);
+      return await geminiRequest(m, contents, temperature);
+    } catch(e) {
+      console.warn(`Model ${m} failed:`, e);
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('所有候选模型均失败');
+}
+
+/* =====================
+   Prompt 构建 (保持 2025版 逻辑不变)
+===================== */
+function buildMasterPrompt() {
+  const checklistCanada = `
+=== 一、标签适用性与总体要求 ===
+1. [适用范围确认]
+   - 审核要点：确认产品是否属于预包装食品，需执行加拿大联邦标签要求：包括国内生产和进口食品。排除豁免情形，如部分鲜果蔬、店内即卖自制食品等。
+   - 依据：Food and Drugs Act (FDA); Food and Drug Regulations (FDR); Safe Food for Canadians Act & Regulations (SFCR); CFIA Industry Labelling Tool – Food labelling for industry (https://inspection.canada.ca/en/food-labels/labelling/industry)
+   - 备注：进口食品同时需符合加拿大法规及出口国相关法规。
+2. [真实、不误导]
+   - 审核要点：核查所有标签信息（文字、图像、商标、宣传语等）不得虚假、误导或造成对食品性质、成分、品质、数量、安全性等的错误印象。
+   - 依据：Food and Drugs Act s.5; FDR; Consumer Packaging and Labelling Act (CPLA); CFIA Industry Labelling Tool – General principles
+   - 备注：重点关注“天然”“零添加”“健康”等容易误导的用语。
+3. [适用法规梳理]
+   - 审核要点：确认该产品是否还受其他专项法规/指南约束，并据此检查对应“标志/声明/位置/用语”要求（若图片不足以判断则标 ❓ 并说明需补充的页面/信息），包括但不限于：
+     - 肉类/禽肉产品（meat and poultry products）：是否触发专项标签要求；如适用，检查检验标志（inspection legend）/厂号（establishment number）使用是否合规、清晰可读；以及进口肉类“Product of … / produit de …”等产地表达与通用名称的相对位置要求。
+     - 辐照食品（irradiated foods）：若标签文字、配料说明或用户资料显示食品/某配料经过辐照，检查主展示版面是否有“irradiated / treated with radiation”等声明 + Radura 符号；并核对配料表对辐照配料的标示方式（如适用）。
+     - 转基因/基因工程（genetically engineered foods）：若出现 “GMO/Non‑GMO/不含转基因”等声称或标志，核查是否真实、不误导，并符合加拿大自愿标识指南/国家标准；如属于因健康/安全或营养/成分显著变化而触发强制披露的情形，应按 Health Canada 要求披露（图片不足时需提示补证据链）。
+   - 依据：FDR（含辐照标识 B.01.035）；SFCR（含 meat and poultry products、inspection legend）；CFIA Industry Labelling Tool – Meat and poultry products (https://inspection.canada.ca/en/food-labels/labelling/industry/meat-and-poultry-products); CFIA – Legibility and location (inspection legend) (https://inspection.canada.ca/en/food-labels/labelling/industry/legibility-and-location); CFIA – Labelling of genetically engineered foods in Canada (https://inspection.canada.ca/en/food-labels/labelling/consumers/genetically-engineered-foods); Health Canada – Food irradiation (https://www.canada.ca/en/health-canada/services/food-nutrition/food-safety/food-irradiation/food-irradiation.html)
+   - 备注：如婴幼儿配方、代餐、特殊医学用途食品等，需额外审查。
+
+=== 二、版面与易读性 ===
+4. [主展示版面（PDP）确认]
+   - 审核要点：确认主展示版面（principal display panel）划定是否合理，通用名称和净含量等核心信息是否位于 PDP 或其他法规指定位置。
+   - 依据：SFCR Part 11（Labelling）；CFIA Industry Labelling Tool – Legibility and location
+   - 备注：对异形包装要特别确认主展示面定义。
+5. [字体高度与清晰度]
+   - 审核要点：检查强制标识信息（通用名称、净含量、营养成分表等）字体高度是否符合最小高度要求，一般不少于 1.6 mm（1/16英寸），部分小包装在满足条件下可 0.8 mm 配料表声明不小于1.1mm高度，6磅字体 营养成分表应以不少于 8 磅的字体尺寸标明 若标签面积大于645平方厘米,字符高度至少要达到9.5mm, 若小于645平方厘米, 字符高度至少要达到6.4mm
+   - 依据：SFCR s.208-210（character height）；CFIA – Legibility requirements
+   - 备注：同时检查字体颜色与背景对比度，避免难以辨认。
+6. [信息集中与不拥挤]
+   - 审核要点：核查强制信息尽量集中、避免分散在难以察看的位置，确保不被插画、图案、商标、促销语等干扰或遮挡。
+   - 依据：CFIA Industry Labelling Tool – Core labelling requirements
+   - 备注：必要时调整版面布局，预留足够空间给必备信息。
+7. [同一视野可见性]
+   - 审核要点：建议消费者在正常陈列状态下一目了然获取主要信息（通用名称、净含量、营养成分表等），避免必须翻转多次才能看到。
+   - 依据：CFIA – Food labelling for consumers (https://inspection.canada.ca/en/food-labels)
+   - 备注：虽非逐条量化规定，但为合规与消费者体验重要审核点。
+
+=== 三、双语标示要求
+（英语 +法语） ===
+8. [强制双语信息范围]
+   - 审核要点：核查通用名称、净含量、原产地、贮存条件、营养成分表标题和营养素名称、过敏原声明、商家名称和地址等强制信息是否同时以英文和法文显示，或使用被视为双语的 SI 符号。
+   - 依据：SFCR s.206, 208; CFIA – Bilingual food labelling (https://inspection.canada.ca/en/food-labels/labelling/industry/bilingual-food-labelling)
+   - 备注：SI 单位符号（g, kg, mL, L 等）视为双语，可单独使用。
+9. [文本等效与翻译准确性]
+   - 审核要点：核查中英文、英法文内容在含义上等效，不得出现一语种夸大或减弱风险、营养、功能等情况。
+   - 依据：CFIA Industry Labelling Tool – Bilingual labelling; LAT “Canadian Labelling Laws” 指南
+   - 备注：对专业术语和健康相关表述建议由专业翻译审核。
+10. [魁北克省额外法语要求]
+   - 审核要点：如产品在魁北克省销售，检查是否满足当地要求：一般需确保法语文本不低于、甚至强于其他语言展示。
+   - 依据：Charter of the French Language (魁北克); LAT “Canadian Labelling Laws” (https://www.latmultilingual.com/.../CanadianLabellingLaws.pdf)
+   - 备注：如全国统一包装，应提前按魁北克要求设计，避免单独版本。
+11. [豁免情形]
+   - 审核要点：核查是否错误套用豁免条款，例如极小包装、单语标签仅供特定渠道且符合法规条件等。
+   - 依据：SFCR; CFIA – Bilingual food labelling guidance
+   - 备注：不当引用豁免是常见合规风险点。
+
+=== 四、通用名称与产品描述 ===
+12. [通用名称使用合规性]
+   - 审核要点：确认产品通用名称（common name）符合 FDR 或其他法规规定的标准名称，或为消费者习惯使用、能准确反映食品真实属性的名称。
+   - 依据：FDR B.01.001; CFIA – Common name guidance; Food labelling in Canada wiki 概述
+   - 备注：避免仅使用品牌名或模糊名称替代通用名称。
+13. [位置与突出程度]
+   - 审核要点：核查通用名称是否位于主展示版面，字体大小和醒目程度是否足以让消费者易于辨识。
+   - 依据：CFIA – Core labelling requirements; SFCR labelling part
+   - 备注：不应被插画、商标或其他文字淹没。
+14. [复合食品名称准确性]
+   - 审核要点：对复合食品（如“芝士味夹心饼干饮料”等），通用名称应体现主要特征和真实属性，不得夸大主要原料或质量等级。
+   - 依据：FDR 相关章节（标准身份）；CFIA – Standards of identity & composition
+   - 备注：必要时需在名称附近加说明，如“调味饮料”“风味饮料”等。
+15. [品种、风味描述]
+   - 审核要点：风味性描述如“草莓味”“香草味”等，应基于配方和香精来源，不得暗示实含水果量远高于实际。
+   - 依据：CFIA – Flavour claims guidance
+   - 备注：对“含××果汁”需对照含量和 FDR 对果汁类标准。
+16. [“原味”等描述合规性]
+   - 审核要点：如使用“原味”（original/plain）等词汇，应确保不误导为“无任何添加”；配方含香精或甜味剂时需评估是否构成误导。
+   - 依据：CFIA Industry Labelling Tool – Composition & quality claims; NSF “Canadian Food Labelling Regulations” 资料
+   - 备注：建议同时使用更中性描述，如“经典配方”等。
+
+=== 五、净含量（Net quantity） ===
+17. [单位与格式]
+   - 审核要点：核查净含量是否使用法定公制单位（g、kg、mL、L 等），符号与数字之间有单个空格，符号大小写符合 CFIA 要求。
+   - 依据：SFCR s.206; CFIA – Net quantity on food labels (https://inspection.canada.ca/en/food-labels/labelling/industry/net-quantity)
+   - 备注：“g” 不能写成 “G”；符号后不加句号。
+18. [双语要求]
+   - 审核要点：当使用文字而非 SI 符号表示净含量时，应以英文和法文同时书写；若使用 SI 符号，可视为双语，无需文字翻译。
+   - 依据：CFIA – Bilingual food labelling; Net quantity on food labels 指南
+   - 备注：例如“500 g” 可单独使用；如写 “500 grams”，则需英法两种文字。
+19. [位置与字体大小]
+   - 审核要点：核查净含量是否位于主展示版面，字体高度满足依据容器展示面积计算的最小高度要求。
+   - 依据：SFCR Schedule 6; CFIA – Net quantity & principal display surface
+   - 备注：避免被图案或透明窗干扰。
+20. [沥干重量等特殊要求]
+   - 审核要点：对装液体介质的固体产品（如罐头蔬菜），核查是否按规定标注沥干重量等附加净含量信息。
+   - 依据：FDR & CFIA – Net quantity guidance; USA/CAN labelling guide PDF
+   - 备注：如适用，需同时标注总量和沥干重量。
+21. [多单元包装]
+   - 审核要点：对多联包或多单元包装，核查净含量是否同时表明总量及单份数量与净含量（如“6 x 250 mL”）。
+   - 依据：CFIA – Net quantity for multi-unit packages
+   - 备注：注意主展示面的表达逻辑清晰。
+
+=== 六、商家信息 ===
+22. [名称与经营地点]
+   - 审核要点：核查标签上标注负责方（制造商、经销商或进口商）的名称及主要营业地点（城市、国家），信息完整且准确。
+   - 依据：SFCR; CFIA Industry Labelling Tool – Name and principal place of business
+   - 备注：进口产品可标注进口商信息，注意与品牌方关系表述清晰。
+23. [角色描述]
+   - 审核要点：如经销商或进口商承担标签主体责任，应使用“Distributed by”“Imported by”等合适表达，与原生产商区分。
+   - 依据：CFIA – Name & principal place of business guidance
+   - 备注：避免消费者误认产地或生产企业。
+24. [联系方式与追溯]
+   - 审核要点：建议提供联系电话、网站或客服信息，方便消费者咨询，并有利于追溯与召回管理。
+   - 依据：SFCR – Traceability; CFIA – Food labelling for consumers
+   - 备注：虽非所有形式强制，但为良好实践。
+
+=== 七、配料与成分 ===
+25. [配料表存在性]
+   - 审核要点：确认所有要求标注配料的预包装食品均设置配料表，除法规豁免的单一成分食品等情况。 每个配料的单词首字母必须大写
+   - 依据：FDR B.01.008-B.01.010; CFIA – List of ingredients and allergens
+   - 备注：单一成分食品（如某些油脂）在特定条件下可豁免。
+26. [顺序与命名]
+   - 审核要点：核查配料按添加时质量比例由高到低依次排列，对复配配料需按法规允许方式展开或以通用名称表示。
+   - 依据：FDR B.01.008; CFIA Industry Labelling Tool – List of ingredients (https://inspection.canada.ca/en/food-labels)
+   - 备注：注意复配配料中含过敏原时的展开和高亮。
+27. [添加水与挥发性成分标示]
+   - 审核要点：检查水和挥发性成分在配方中的标示是否符合 FDR 要求（例如制造过程中挥发掉的可以部分豁免）。
+   - 依据：FDR B.01.008(3)-(4); CFIA – Ingredients guidance
+   - 备注：对油炸、烘焙产品要特别关注。
+28. [成分名称标准化]
+   - 审核要点：核查使用法规或指南认可的成分名称，避免使用模糊、品牌化、误导性的成分称呼。
+   - 依据：CFIA – Ingredients glossary; FDR 相关附录
+   - 备注：如使用“香料”“香精”需符合对应定义。
+29. [含量强调与 QUID]
+   - 审核要点：如在名称或图示中特别强调某成分（如“高水果含量”或大幅水果图片），需评估是否需要按比例标示其含量并与实际配方一致。
+   - 依据：CFIA – Composition & quality claims; Country-of-origin & ingredient claims guidance
+   - 备注：避免通过图片夸大次要成分。
+30. [转基因相关标示]
+   - 审核要点：
+     - 若出现 “GMO / genetically engineered / bioengineered / Non‑GMO / 不含转基因”等字样、图标或第三方认证标识，核查是否与配方/原料/证据一致，且不误导；
+     - 不得暗示未标“非转基因”的产品不安全；
+     - 如属于因健康/安全或营养/成分显著变化而需要强制披露的情形（由 Health Canada 判定），则检查披露是否充分；图片不足时结论必须标 ❓ 并要求补充证据链（配方、原料规格、变更说明等）。
+   - 依据：CFIA – Labelling of genetically engineered foods in Canada (https://inspection.canada.ca/en/food-labels/labelling/consumers/genetically-engineered-foods); CFIA – Method of production claims (https://inspection.canada.ca/en/food-labels/labelling/industry/method-production-claims); Health Canada – Labelling genetically modified (GM) foods (https://www.canada.ca/en/health-canada/services/food-nutrition/genetically-modified-foods-other-novel-foods/labelling.html); National Standard of Canada (CGSB 32.315) (https://publications.gc.ca/collections/collection_2021/ongc-cgsb/P29-32-315-2021-eng.pdf)
+   - 备注：对第三方“Non‑GMO”认证/标志，需提供认证范围与有效证书；否则标 ❓。
+
+=== 八、过敏原与麸质 ===
+31. [重点过敏原标示]
+   - 审核要点：核查配料表及单独“Contains”或“Contains/Contient”声明中对加拿大规定的优先过敏原（如牛奶、坚果、花生、蛋、小麦、芝麻等）是否完整、清晰标示 - 杏仁、巴西坚果、腰果、榛子、澳洲坚果、山核桃、松子、开心果或核桃、花生芝麻小麦或黑小麦蛋牛奶大豆甲壳动物 软体动物鱼，或芥菜籽亚硫酸盐 英文的过敏原Contain警示语要紧跟在英文ingredient list下方, 法文的过敏原Contain警示语要紧跟在法文ingredient list下方
+   - 依据：FDR B.01.010.1; CFIA – Food allergen labelling (allergen labelling tips)
+   - 备注：建议使用统一格式如“Contains: milk, wheat / Contient : lait, blé”。
+32. [交叉接触预警]
+   - 审核要点：评估交叉接触风险是否真实存在，必要时使用“May contain”类声明，且不得替代良好生产规范。
+   - 依据：CFIA – Allergen and gluten labelling guidance
+   - 备注：避免过度使用“May contain everything”式声明。
+33. [麸质与“无麸质”声称]
+   - 审核要点：如标示“gluten-free”，需符合加拿大无麸质法规限制，确保配方和生产控制均满足要求。
+   - 依据：FDR B.24.018; CFIA – Gluten-free claims guidance
+   - 备注：建议配合供应链控制与环境监控验证。
+34. [配料展开中过敏原识别]
+   - 审核要点：复配配料中含有过敏原时，需在配料表中明示该过敏原，不得仅隐藏在复配名称中。
+   - 依据：FDR allergen labelling amendments; CFIA – List of ingredients & allergens
+   - 备注：例如“香精（含牛奶）”或在 Contains 声明中统一列出。
+35. [图示与文案一致性]
+   - 审核要点：如使用坚果、乳制品等图案，应与实际是否含相应过敏原一致，避免产生错误安全感或误导。
+   - 依据：CFIA – General principles; Allergen labelling tips
+   - 备注：图示不能暗示“无乳制品”而配方实际含乳。
+
+=== 九、添加剂与强化剂 ===
+36. [食品添加剂合法性]
+   - 审核要点：核查使用的食品添加剂种类及用途是否在加拿大允许的范围内，并按类别或具体名称在配料表中标示。 食物添加剂必须在预先包装产品的配料表内以可接受的通用名称标明
+   - 依据：FDR Division 16 – Food additives; CFIA – Food additives guidance
+   - 备注：对进口产品需特别核对中国等原法规允许但加拿大未批准的品种。
+37. [甜味剂与特殊标注]
+   - 审核要点：如使用无能量甜味剂（阿斯巴甜、三氯蔗糖等），检查是否符合使用条件，并按要求标示甜味剂名称及必要警示/提示语。
+   - 依据：FDR B.01.018-B.01.019; CFIA – Sweeteners (https://inspection.canada.ca/en/food-labels/labelling/industry/sweeteners)
+   - 备注：如含苯丙氨酸来源时需额外提示 PKU 患者。
+38. [营养强化剂合法性]
+   - 审核要点：如强化维生素、矿物质等，需核查是否属于允许强化类别、添加水平是否合理，并在营养成分表和配料表中正确体现。
+   - 依据：FDR Division 3 – Vitamins and minerals; CFIA – Fortification guidance
+   - 备注：注意与营养声称的一致性。
+39. [带入原则与总限量]
+   - 审核要点：对含有添加剂的复配原料，核查最终产品中添加剂总量（直接添加＋带入）是否不超过 FDR 规定限量。
+   - 依据：FDR Division 16; CFIA additives guidance
+   - 备注：审查配方和供应商规格，必要时通过计算表验证。
+40. [“无添加”“不含”类声称]
+   - 审核要点：如标签使用“无添加防腐剂”“不含人工色素”等，应确保配方与工艺真实符合，不得通过带入或功能性添加剂规避。
+   - 依据：CFIA Industry Labelling Tool – Composition & quality claims; Natural & free-from guidance
+   - 备注：建议保留配方和原料佐证文件。
+
+=== 十、营养成分表（Nutrition Facts Table） ===
+41. [是否需要 NFT]
+   - 审核要点：核查产品是否属于必须标注营养成分表的范围，或是否符合豁免条件（如部分鲜果蔬、特定小生产者直销等）。
+   - 依据：FDR B.01.401-B.01.403; CFIA – Nutrition labelling; Food labelling in Canada 概述
+   - 备注：对使用营养或健康声称的产品，一般不能豁免 NFT。
+42. [版式与官方模板]
+   - 审核要点：确认 NFT 的版式、字体、线条、顺序等是否符合最新加拿大标准模板（包括标准、双列、小型格式等）。
+   - 依据：FDR Schedule for Nutrition Facts Table; Manitoba Food Labelling Requirements PDF (https://www.gov.mb.ca/asset_library/en/pathways/food-labelling.pdf)
+   - 备注：不建议自行设计非标准布局。
+43. [份量（Serving size）与参考量]
+   - 审核要点：检查标示的份量（serving size）是否与加拿大参考量（reference amount）相协调，且真实反映消费者通常食用量。 加拿大所分份数，有小包装就按照小包克数吃几包来计算，如果是类似于汤圆类，则按照一颗汤圆的克数去分配吃几颗
+   - 依据：FDR B.01.001, B.01.401; Health Canada – Reference amounts; CFIA – Nutrition labelling guidance
+   - 备注：不应故意设置异常小的份量以淡化高糖高盐。
+44. [营养素项目完整性]
+   - 审核要点：核查强制营养素（能量、脂肪、饱和脂肪+反式脂肪、碳水化合物、糖、纤维、蛋白质、钠等）及适用时其他营养素是否完整标示。
+   - 依据：FDR B.01.401-B.01.402; CFIA – The elements within the Nutrition Facts Table
+   - 备注：如有添加维生素矿物质，可选择性列入相应项目。
+45. [%DV 日需量百分比]
+   - 审核要点：检查 %DV 计算是否基于加拿大规定的参考数值，并按规定四舍五入和阈值规则标示。
+   - 依据：FDR Nutrition Labelling Amendments; CFIA – %Daily Value guidance
+   - 备注：注意部分营养素有“少于 X% DV 可标 0” 的规则。
+46. [糖类标示（含“总糖”）]
+   - 审核要点：核查“糖”（sugars）项目数据及其 %DV，确保与配方中游离糖和内源糖的计算一致，符合新规。
+   - 依据：Health Canada – Nutrition labelling modernisation; CFIA nutrition guidance
+   - 备注：同时检查与“低糖”“无添加糖”等声称的一致性。
+47. [小包装特殊布局]
+   - 审核要点：对面积较小的包装，确认 NFT 是否采用允许的简化格式，且确实符合尺寸豁免条件。
+   - 依据：FDR 表格格式附录; CFIA – Small package nutrition labelling
+   - 备注：不可任意使用简化版。
+48. [语言与双语要求]
+   - 审核要点：确认 NFT 中营养素名称、说明用语等以英法双语呈现，或采用满足官方模板的双语版式。
+   - 依据：CFIA – Bilingual labelling; Nutrition Facts Table templates
+   - 备注：同一版 NFT 中英法内容应对齐、等效。
+
+=== 十一、前标营养符号（FOP） ===
+49. [是否触发 FOP 要求]
+   - 审核要点：根据产品中饱和脂肪、糖、钠的含量与参考量（reference amount）和每份摄入量，计算是否达到必须加贴 FOP 符号的阈值。
+   - 依据：Health Canada – Front-of-package nutrition symbol (https://www.canada.ca/en/health-canada/services/food-nutrition/nutrition-labelling/front-package.html); FOP labelling guide for industry
+   - 备注：阈值通常为≥15% DV（或参考量≤30 g/mL 时为≥10% DV），主菜类可能更高。
+50. [符号样式与文字]
+   - 审核要点：审核 FOP 标志形状、边框、图标、文字（“High in / Élevé en”）是否符合官方模板，颜色与对比度是否达到要求。
+   - 依据：Health Canada – FOP labelling guide for industry; Lexology 等合规综述
+   - 备注：建议直接参照官方矢量模板设计。
+51. [位置与尺寸]
+   - 审核要点：检查 FOP 标志位于主展示版面的显著位置，最小尺寸符合包装面积对应的要求。
+   - 依据：Health Canada – FOP technical specifications; CFIA – Front-of-package labelling deadline
+   - 备注：避免被角标、促销贴纸遮挡。
+52. [豁免与例外]
+   - 审核要点：确认如牛奶、鸡蛋、蔬菜水果等符合 FOP 豁免类别时，未误贴 FOP 或声明与法规冲突。
+   - 依据：Health Canada – Foods that do not need a nutrition symbol
+   - 备注：部分小包装或营养构成特殊食品有例外条款。
+53. [过渡期安排]
+   - 审核要点：核查产品上市或包装更换时间，确保在 2026-01-01 前完成 FOP 要求的切换。
+   - 依据：New Front-of-Package Nutrition Labelling in Canada (Canadian Food Focus); Cassels & Lexology 相关文章
+   - 备注：对库存旧包装需提前做好清退与更新计划。
+54. [与营养声称的一致性]
+   - 审核要点：确认 FOP 符号与包装上的营养声称不矛盾，例如不得同时标示“高钠 FOP”和“低钠”声称。
+   - 依据：Health Canada – FOP guidance; CFIA – Nutrient content claims guidance
+   - 备注：必要时调整或取消部分营养声称。
+
+=== 十二、日期与贮存条件 ===
+55. [耐久日期或保质期]
+   - 审核要点：核查使用“Best before / Meilleur avant”等耐久日期标示的格式、位置及编码可读性，确保消费者易于理解。 食肆、航空公司或其他商业企业提供的预先包装食物的个别部分，以及供即时食用的膳食或小吃可豁免标识保质期
+   - 依据：FDR B.01.007; CFIA – Understanding the date labels on your food (https://inspection.canada.ca/en/food-labels/labelling/consumers/understanding-food-labels)
+   - 备注：避免仅印生产批号而缺失法规要求的日期。
+56. [日期语言与格式]
+   - 审核要点：确保日期文字以英法双语标示，使用规定的年月日缩写格式，不得造成歧义。
+   - 依据：FDR date marking rules; CFIA – Date markings and storage instructions
+   - 备注：建议使用三字母月份缩写并与说明文本一致。
+57. [贮存条件标识]
+   - 审核要点：如食品对温度、湿度、光照有特殊要求，需在标签上清晰标明贮存条件，并与保质期验证结果匹配。
+   - 依据：CFIA Industry Labelling Tool – Date markings and storage instructions
+   - 备注：如需冷藏“Keep refrigerated / Garder réfrigéré”。
+58. [开封后食用建议]
+   - 审核要点：建议为高风险或保质期较短产品标示开封后保存条件及食用期限提示，提升消费者食品安全。
+   - 依据：CFIA – Food labelling for consumers; Good practice guidance
+   - 备注：如“Consume within X days after opening”等。
+
+=== 十三、原产地与产地声称 ===
+59. [实质性加工地与原料来源]
+   - 审核要点：核查标签中原产国标示是否与产品实质性加工地点和主要原料来源一致，避免引起对产地的误解。
+   - 依据：CFIA – Origin claims guidance; Dell Tech – Canadian food labelling regulations (country of origin)
+   - 备注：复杂供应链建议保留追溯文件。
+60. [“Product of Canada”使用条件]
+   - 审核要点：如使用“Product of Canada”，应满足几乎全部主要成分和加工在加拿大完成的严格条件。
+   - 依据：CFIA – Guidelines for Product of Canada and Made in Canada claims
+   - 备注：不符合条件时应考虑“Made in Canada with imported ingredients”等表述。
+61. [“Made in Canada”用语]
+   - 审核要点：如在加拿大进行实质性加工但使用大量进口原料，可使用“Made in Canada from imported ingredients”等准确描述。
+   - 依据：CFIA – Product of Canada / Made in Canada 指南
+   - 备注：避免简单使用国旗图案替代有效说明。
+62. [图示与国旗符号]
+   - 审核要点：使用国旗、地图等图形时，应与真实原产地信息一致，不得暗示错误产地。
+   - 依据：CFIA – Origin and quality claims guidance
+   - 备注：多个国家加工时应谨慎设计图像。
+
+=== 十四、营养与健康声称 ===
+63. [营养成分含量声称]
+   - 审核要点：核查“source of”“high in”“low in”等营养声称是否符合 FDR 对含量和阈值的量化要求，并以英法双语表达。
+   - 依据：FDR Division 24 – Nutrient content claims; CFIA – Nutrient content claims guidance
+   - 备注：确保 NFT 中数据支持相应声称。
+64. [健康声称与疾病风险]
+   - 审核要点：如使用疾病风险降低或功能性健康声称，应确认属于法规允许清单，且表达、限定条件和证据支持均符合要求。
+   - 依据：FDR – Health claims provisions; Health Canada – Health claims guidance
+   - 备注：不允许暗示预防、治疗或治愈疾病的药品式宣称。
+65. [“天然”“natural”声称]
+   - 审核要点：如强调“natural”“all natural”等，应符合 CFIA 对天然声称的最新结果导向性指南，不得含有人工添加剂或深度加工成分。
+   - 依据：CFIA Industry Labelling Tool – Natural claims (updated guidance); DWW &其他律所解读
+   - 备注：天然声称被重点监管，需特别谨慎。
+66. [有机（organic）标识]
+   - 审核要点：如使用“organic”“biologique”或有机标志，需符合加拿大有机制度（Canada Organic Regime），并有经认可认证机构的证书支持。
+   - 依据：Safe Food for Canadians Regulations – Organic Products; CFIA – Organic products guidance
+   - 备注：进口有机产品还需符合互认或等同性安排。
+67. [“无添加糖”“减少糖”]
+   - 审核要点：如标示“no added sugar”“reduced in sugar”等，应依照 FDR 的定义和阈值，确保配方不含任何形式的添加糖或糖性成分（包括浓缩果汁作甜味来源）。
+   - 依据：FDR – Sugar-related nutrient content claims; Health Canada sugar reduction guidance
+   - 备注：需结合配方、工艺和供应商规格综合审核。
+68. [“低脂”“低钠”等风险营养素声称]
+   - 审核要点：对脂肪、饱和脂肪、钠等使用“low”“free”等表述时，必须符合 FDR 对每份和每 100 g/mL 的定量限制。
+   - 依据：FDR – Low / free claims; CFIA – Nutrient content claims guidance
+   - 备注：同时检查 FOP 标志是否与之矛盾。
+69. [环境与可持续性声称]
+   - 审核要点：如使用“eco-friendly”“carbon neutral”等环境信息，应遵循一般真实、不误导原则，并准备相应证据。
+   - 依据：Competition Bureau Canada – Environmental claims guidance; CFIA – General principles
+   - 备注：虽然非食品专属法规，但与标签宣传紧密相关。
+70. [儿童与敏感人群目标宣传]
+   - 审核要点：面向儿童或特定敏感群体的宣传需格外谨慎，避免通过卡通形象或夸大健康声称鼓励过量摄入高糖高盐食品。
+   - 依据：Health Canada – Marketing to kids policy developments; CFIA – General principles
+   - 备注：建议内部建立儿童向营销的合规审查机制。
+
+=== 十五、特殊食品 ===
+71. [婴幼儿配方与辅食]
+   - 审核要点：若产品为婴幼儿配方或辅食，需符合对应专门章节的营养、配方与标签要求，包括年龄段、冲调方法、警示等。
+   - 依据：FDR Division 25; Health Canada infant foods guidance
+   - 备注：属高风险产品，建议单独建立标签审核清单。
+72. [酒精饮料标签]
+   - 审核要点：对酒精饮料，应根据酒精度数、容量等要求标示酒精含量及法定警示信息，同时遵守各省补充法规。
+   - 依据：FDR Division 2 & provincial liquor laws; CFIA – Alcoholic beverages labelling
+   - 备注：注意与营销活动（赞助、促销）相关限制。
+73. [特膳、代餐和功能性饮料]
+   - 审核要点：如产品定位为体重控制、运动营养等特膳食品，需核查是否使用了受限表达，营养配比和标签符合相关指导文件。
+   - 依据：Health Canada – Supplemented foods & sports nutrition guidance
+   - 备注：避免使用类似药品疗效的用语。
+74. [二维码和数字化信息]
+   - 审核要点：如通过二维码提供扩展信息，应确保线上内容与包装信息一致，不含违法或误导性宣传。
+   - 依据：CFIA – Digital and electronic labelling emerging guidance; General principles
+   - 备注：线上内容也可能被视为广告的一部分。
+75. [条码与内部编码]
+   - 审核要点：商品条码虽通常非法规强制要素，但应确保不与标签所示商家与产地信息矛盾。
+   - 依据：GS1 指南；CFIA – General principles
+   - 备注：集团统一条码时要有授权和管理记录。
+`;
+
+  return `【任务】你是一名顶级的加拿大食品标签合规审核专家（CFIA / Health Canada 口径）。请根据用户上传的标签图片或PDF页面，逐项核对下方【加拿大审核要素表】并输出“问题导向”的审核报告。
+
+【审核范围（以清单“依据”为准）】
+- Food and Drugs Act (FDA)
+- Food and Drug Regulations (FDR)
+- Safe Food for Canadians Regulations (SFCR)
+- Consumer Packaging and Labelling Act / Regulations (CPLA / CPLR)
+- CFIA / Health Canada 相关指南与工具（如 Industry Labelling Tool 等）
+
+【严格限制】
+1) 除非清单“依据法规/指南”明确提及，否则**不要**引用中国或其他国家/地区的标签法规（例如 GB、US FDA、EU 等）。
+2) **禁止杜撰条款号**：法规依据优先直接复用清单“依据法规/指南”的原文；若无法确认到条款级别，请如实写“清单依据未到条款号/需进一步查证”。
+3) 若图片不清晰、版面缺失、关键信息被遮挡或未提供（例如：背标、营养表、条码面、瓶盖/贴标等），结论必须给 ❓【不确定】，并明确“缺哪一面/哪一栏/哪句话”。
+4) 加拿大常见硬要求：**英/法双语**（必要信息需双语呈现）、强制要素位置/字体可读性、NFT（Nutrition Facts table）格式、过敏原与声明、日期/贮存与净含量，以及**肉类/禽肉检验标志（inspection legend/establishment number）**、**辐照标志（Radura）与声明**、**转基因/非转基因（GMO/Non‑GMO）相关标识与声称**等——请重点关注。
+
+【输出逻辑】
+1) **仅输出**结论为 ❌【不通过】 或 ❓【不确定】 的项目。
+2) 对于 ✅【通过】 或 ⚪【不适用】 的项目，**保持沉默，不要输出**。
+3) 如果整张标签未发现不通过或不确定项，请只输出一句：“经核查，未发现明显不合规项。”
+4) 输出时，“大类/要素名称”尽量使用清单中的原名，便于回溯整改。
+
+【输出格式】
+**1) 概览结论**
+- **整体评价：**【不通过 / 不确定 / 通过】
+- **核心摘要：**（用3-6条概括最关键风险点，优先影响上市/扣留/召回风险的点：如双语缺失、NFT错误、过敏原声明、净含量、通用名称等）
+
+**2) 风险要素审核（仅展示问题项）**
+大类：<清单大类>
+要素：<审核子项>
+结论：❌不通过 / ❓不确定
+风险：高/中/低
+问题点：…
+依据法规/指南：…（优先照抄清单中的“依据法规/指南”）
+整改建议：…（给到可直接落地的改法：改哪句话/加哪一栏/放哪一面/双语怎么补）
+需补充资料：…（如需要补背标、NFT细节、配方、声明依据等）
+
+**3) 补充说明**
+- **通用建议：**（比如：双语一致性校对、字体高度/对比度、主展示面PDP布局、宣称证据链、线上二维码内容一致性等）
+- **重点复核项：**（列出建议二次确认的高风险点）
+
+**【加拿大审核要素表（内置）】**
+${checklistCanada}
+`;
+}
+/* =====================
+   审核主流程
+===================== */
+auditEl.addEventListener('click', async () => {
+  if (files.length === 0) {
+    return status('请先添加图片或PDF');
+  }
+  auditEl.disabled = true;
+  status('正在压缩/处理图片…');
+  try {
+    // 处理所有文件（无论是上传的图片还是PDF页，结构已统一）
+    const compressionTasks = files.map(f => downscaleImage(f));
+    const compressedDataUrls = await Promise.all(compressionTasks);
+
+    if (compressedDataUrls.length === 0) {
+      throw new Error('没有可审核的图片内容');
+    }
+
+    // 提交图片上限（含PDF页），0=全部
+    const maxSend = parseInt((maxSendEl && maxSendEl.value) || '0', 10) || 0;
+    const submittedDataUrls = (maxSend > 0) ? compressedDataUrls.slice(0, maxSend) : compressedDataUrls;
+
+    // 仅保留本次提交到AI的上下文图片（用于追问与导出，避免超长）
+    lastDataUrls = submittedDataUrls;
+
+    const userParts = [];
+    userParts.push({ type: 'text', text: buildMasterPrompt() });
+    submittedDataUrls.forEach(dataUrl => userParts.push({ type: 'data_url', dataUrl }));
+    
+    // 提取文件名列表供 AI 参考
+    const fileNames = files.map(f => f.name).join(', ');
+    userParts.push({ type: 'text', text: `\n[文件列表] ${fileNames}`});
+
+    status(`已提交（${submittedDataUrls.length}/${compressedDataUrls.length}张），正在生成专家报告…`);
+    const contents = buildGeminiContents(userParts);
+    const finalText = await sendWithFallback(contents, 0.05, (model) => status(`请求失败，尝试备用模型 ${model}…`));
+    
+    resultEl.textContent = finalText;
+    status('完成', true);
+  } catch (e) {
+    console.error(e);
+    resultEl.textContent = e.message;
+    status('失败', false, true);
+  } finally {
+    auditEl.disabled = false;
+  }
+});
+
+/* =====================
+   复制与导出
+===================== */
+copyEl.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(resultEl.textContent || '');
+    status('已复制', true);
+  } catch (err) {
+    status('复制失败', false, true);
+  }
+});
+exportPdfEl.addEventListener('click', () => {
+  const win = window.open('', '_blank');
+  if (!win) return alert("无法打开新窗口，请检查浏览器是否阻止了弹出窗口。");
+  const imageHtml = files.map((f, i) => `<div class="img"><img src="${lastDataUrls[i] || f.dataUrl || ''}"></div>`).join('');
+  const resultHtml = (resultEl.textContent || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>审核结果导出</title><style>body{font:14px/1.6 sans-serif;padding:24px;white-space:pre-wrap}h1{font-size:18px;margin:0 0 12px}.img{margin:8px 0;page-break-inside:avoid}img{max-width:100%;display:block;border:1px solid #ddd;border-radius:8px;padding:4px}</style></head><body><h1>AI标签合规审核结果</h1>${imageHtml}<div>${resultHtml}</div><script>setTimeout(()=>window.print(),500)</scr`+`ipt></body></html>`);
+  win.document.close();
+});
+
+/* =====================
+   对话逻辑 (含显示/隐藏修改)
+===================== */
+// 新增：打开对话框
+chatTrigger.addEventListener('click', () => {
+  chatWrap.style.display = 'flex';
+  chatTrigger.style.display = 'none'; // 隐藏悬浮按钮
+  chatInput.focus();
+});
+// 新增：最小化对话框
+chatMin.addEventListener('click', () => {
+  chatWrap.style.display = 'none';
+  chatTrigger.style.display = 'flex'; // 显示悬浮按钮
+});
+
+chipBar.addEventListener('click', (e) => {
+  if (e.target.classList.contains('chat-chip')) {
+    chatInput.value = e.target.textContent;
+    chatInput.focus();
+  }
+});
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend.click(); }
+});
+chatSend.addEventListener('click', async () => {
+  if (chatBusy) return;
+  const query = (chatInput.value || '').trim();
+  if (!query) return;
+  appendMsg(query, 'me');
+  chatInput.value = '';
+  chatBusy = true;
+  chatStatusTip('思考中…');
+  try {
+    const parts = [{ type: 'text', text: `【身份】你是“加拿大食品标签合规”审核助手（CFIA / Health Canada 口径）。
+【范围】仅回答加拿大联邦食品标签合规问题；不引用中国/其他国家法规（除非用户明确要求）。
+【风格】中文输出、条目式、结论优先、避免空话。
+【原则】不清楚/看不见的地方必须说“不确定”，并告诉用户需要补哪一面/哪一段信息。
+【依据】优先引用本工具审核要素表中的“依据法规/指南”措辞；不要杜撰条款号。` }];
+    if (resultEl.textContent) parts.push({ type: 'text', text: '【已知审核结果】\n' + resultEl.textContent.slice(0, 12000) });
+    if (lastDataUrls.length > 0) parts.push({ type: 'data_url', dataUrl: lastDataUrls[0] });
+    parts.push({ type: 'text', text: "【用户问题】\n" + query });
+    
+    const contents = buildGeminiContents(parts);
+    const answer = await sendWithFallback(contents, 0.05, (m) => chatStatusTip(`切换模型 ${m}…`));
+    appendMsg(answer, 'bot');
+  } catch (e) {
+    appendMsg('出错了：' + (e.message || String(e)), 'sys');
+  } finally {
+    chatBusy = false;
+    chatStatusTip('就绪');
+  }
+});
+function appendMsg(text, role = 'bot') {
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `chat-msg ${role === 'me' ? 'me' : (role === 'sys' ? 'sys' : '')}`;
+  msgDiv.innerHTML = `<div class="chat-bubble"></div>`;
+  msgDiv.querySelector('.chat-bubble').textContent = text;
+  chatBody.appendChild(msgDiv);
+  chatBody.scrollTop = chatBody.scrollHeight;
+}
+
+refreshUI();
+
+})();
+</script>
+<script src="/tools/login-guard.js"></script>
+</body>
+</html>
